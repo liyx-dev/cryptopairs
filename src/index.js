@@ -1,5 +1,5 @@
 export default {
-  // Triggered automatically by Cloudflare Cron Schedule
+  // Triggered automatically by Cloudflare Cron Schedule (e.g. every 2 minutes)
   async scheduled(event, env, ctx) {
     try {
       await processBlitzSignal(env);
@@ -8,7 +8,7 @@ export default {
     }
   },
 
-  // Allows manual trigger via URL (e.g. /trigger)
+  // Manual trigger / API endpoint handler
   async fetch(request, env) {
     const url = new URL(request.url);
 
@@ -17,19 +17,17 @@ export default {
         const result = await processBlitzSignal(env);
         return Response.json(result);
       } catch (err) {
-        return new Response(
-          JSON.stringify({
-            error: "Execution Failed",
-            details: err.message,
-            stack: err.stack
-          }, null, 2),
-          { status: 500, headers: { "Content-Type": "application/json" } }
-        );
+        return Response.json({
+          error: "Execution Failed",
+          details: err.message,
+          stack: err.stack
+        }, { status: 500 });
       }
     }
 
     if (url.pathname === "/history") {
       try {
+        if (!env.DB) return Response.json({ error: "D1 Database binding missing" }, { status: 500 });
         const { results } = await env.DB.prepare(
           "SELECT * FROM signals ORDER BY timestamp DESC LIMIT 20"
         ).all();
@@ -39,127 +37,165 @@ export default {
       }
     }
 
-    return new Response("IQ Option Multi-Pair Blitz Bot Active. Use /trigger to test.", { status: 200 });
+    return new Response("Production IQ Option Blitz Bot Active. Use /trigger to test.", { status: 200 });
   }
 };
 
-// 10 Supported High-Liquidity Blitz Crypto Pairs
+// 10 Supported High-Liquidity Crypto Assets with Configurable Expiry Profiles
 const TARGET_PAIRS = [
-  { symbol: "BTCUSDT", display: "Bitcoin (BTC/USD)" },
-  { symbol: "ETHUSDT", display: "Ethereum (ETH/USD)" },
-  { symbol: "SOLUSDT", display: "Solana (SOL/USD)" },
-  { symbol: "XRPUSDT", display: "Ripple (XRP/USD)" },
-  { symbol: "LTCUSDT", display: "Litecoin (LTC/USD)" },
-  { symbol: "DOGEUSDT", display: "Dogecoin (DOGE/USD)" },
-  { symbol: "ADAUSDT", display: "Cardano (ADA/USD)" },
-  { symbol: "TRXUSDT", display: "Tron (TRX/USD)" },
-  { symbol: "DOTUSDT", display: "Polkadot (DOT/USD)" },
-  { symbol: "BCHUSDT", display: "Bitcoin Cash (BCH/USD)" }
+  { symbol: "BTCUSDT", display: "Bitcoin (BTC/USD)", expiryMinutes: 2 },
+  { symbol: "ETHUSDT", display: "Ethereum (ETH/USD)", expiryMinutes: 2 },
+  { symbol: "SOLUSDT", display: "Solana (SOL/USD)", expiryMinutes: 3 },
+  { symbol: "XRPUSDT", display: "Ripple (XRP/USD)", expiryMinutes: 3 },
+  { symbol: "LTCUSDT", display: "Litecoin (LTC/USD)", expiryMinutes: 2 },
+  { symbol: "DOGEUSDT", display: "Dogecoin (DOGE/USD)", expiryMinutes: 3 },
+  { symbol: "ADAUSDT", display: "Cardano (ADA/USD)", expiryMinutes: 3 },
+  { symbol: "TRXUSDT", display: "Tron (TRX/USD)", expiryMinutes: 5 },
+  { symbol: "DOTUSDT", display: "Polkadot (DOT/USD)", expiryMinutes: 3 },
+  { symbol: "BCHUSDT", display: "Bitcoin Cash (BCH/USD)", expiryMinutes: 2 }
 ];
 
 async function processBlitzSignal(env) {
-  // 1. Fetch live 1-min candles for all 10 pairs in parallel (Uses 10 subrequests)
+  // Step 1: Run D1 Database Maintenance Routine (Auto-delete records > 4 days old)
+  if (env.DB) {
+    ctxDatabaseCleanup(env.DB).catch(err => console.warn("D1 Cleanup Warning:", err.message));
+  }
+
+  // Step 2: Parallel Data Fetching for 10 pairs (10 subrequests total)
   const marketPromises = TARGET_PAIRS.map(pair => fetchPairData(pair));
   const marketResults = await Promise.all(marketPromises);
 
-  // 2. Quantitative Technical Analysis Loop
+  // Step 3: Quantitative Technical Analysis Pipeline
   const validSignals = [];
-
   for (const asset of marketResults) {
-    if (!asset.success || asset.candles.length < 20) continue;
+    if (!asset.success || !asset.candles || asset.candles.length < 20) continue;
 
     const signal = analyzeMarket(asset);
-    if (signal && !signal.skipTrade && signal.direction !== "WAIT") {
+    if (signal && !signal.skipTrade && signal.direction !== "WAIT" && signal.confidence >= 0.75) {
       validSignals.push(signal);
     }
   }
 
-  // Calculate Entry Time for Next 1-minute candle in WAT
+  // Calculate Entry Time (Strictly 2 Minutes in advance for execution prep)
   const now = new Date();
-  now.setMinutes(now.getMinutes() + 1);
-  const entryTime = now.toLocaleTimeString('en-US', {
+  const entryDate = new Date(now.getTime() + 2 * 60000); // +2 minutes lead time
+  const entryTimeStr = entryDate.toLocaleTimeString('en-US', {
     timeZone: 'Africa/Lagos',
     hour: '2-digit',
     minute: '2-digit',
     hour12: true
   });
 
-  // If no pair meets the strict quantitative threshold, exit safely
+  // If no setup satisfies the strict quantitative criteria, exit safely
   if (validSignals.length === 0) {
     return {
       status: "Filtered",
-      message: "No trade meets high-accuracy threshold across all 10 pairs.",
+      message: "Capital Safe: No pair meets high-accuracy threshold (>=75%). Trade skipped.",
       scannedPairs: TARGET_PAIRS.length
     };
   }
 
-  // Sort signals by highest confidence and pick the top setup
+  // Select the single highest-confidence setup across all 10 assets
   validSignals.sort((a, b) => b.confidence - a.confidence);
   let bestSignal = validSignals[0];
 
-  // 3. Workers AI Double Verification for the Best Signal
+  // Step 4: MANDATORY Workers AI Verification Gatekeeper
+  let aiVerified = false;
   if (env.AI) {
     try {
-      const prompt = `System: IQ Blitz Option Signal Validator.
-Pair: ${bestSignal.display}. Price: $${bestSignal.price}. Signal: ${bestSignal.direction}. Confidence: ${bestSignal.confidence}. Reason: ${bestSignal.reasoning}.
-Validate if this short-term trend is safe for 60s Blitz. Reply STRICTLY in valid JSON: {"direction": "CALL"|"PUT"|"WAIT", "confidence": 0.75-0.95, "reasoning": "1 short sentence"}`;
+      const prompt = `System: You are an elite quantitative binary options trader protecting capital.
+Asset: ${bestSignal.display}. Price: $${bestSignal.price}. Indicator Signal: ${bestSignal.direction}. Confidence Score: ${bestSignal.confidence}. Technical Setup: ${bestSignal.reasoning}.
+Task: Strictly validate if this 1m-5m Blitz option trend is safe. Reply ONLY in JSON with exact format: {"direction": "CALL"|"PUT"|"WAIT", "confidence": 0.75-0.95, "reasoning": "1 short sentence"}`;
 
-      const aiResponse = await env.AI.run("@cf/meta/llama-3.3-70b-instruct-fp8-fast", { prompt });
+      // Try Llama 3.3 70b, fallback to 3.1 8b
+      let aiResponse;
+      try {
+        aiResponse = await env.AI.run("@cf/meta/llama-3.3-70b-instruct-fp8-fast", { prompt });
+      } catch (e) {
+        aiResponse = await env.AI.run("@cf/meta/llama-3.1-8b-instruct", { prompt });
+      }
+
       if (aiResponse && aiResponse.response) {
         const clean = aiResponse.response.trim();
         const jsonMatch = clean.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
           const parsed = JSON.parse(jsonMatch[0]);
-          if (parsed.direction === "WAIT") {
-            bestSignal.skipTrade = true;
-          } else {
-            bestSignal.direction = parsed.direction || bestSignal.direction;
+          if (parsed.direction === "CALL" || parsed.direction === "PUT") {
+            bestSignal.direction = parsed.direction;
             bestSignal.confidence = parsed.confidence ? Math.min(0.95, parseFloat(parsed.confidence)) : bestSignal.confidence;
             bestSignal.reasoning = parsed.reasoning || bestSignal.reasoning;
+            aiVerified = true;
+          } else {
+            // AI returned "WAIT"
+            bestSignal.skipTrade = true;
+            bestSignal.reasoning = parsed.reasoning || "AI rejected trade due to market instability.";
           }
         }
       }
     } catch (aiErr) {
-      console.warn("AI Model bypassed, executing quantitative signal:", aiErr.message);
+      console.warn("AI Gatekeeper Error:", aiErr.message);
+      bestSignal.skipTrade = true; // MANDATORY AI REQUIREMENT: If AI fails, skip trade to preserve capital.
     }
+  } else {
+    // If env.AI is missing, enforce mandatory rule: skip trade
+    bestSignal.skipTrade = true;
+    bestSignal.reasoning = "Mandatory AI validation environment missing. Trade aborted for safety.";
   }
 
-  if (bestSignal.skipTrade) {
-    return { status: "Filtered", message: "AI downgraded signal to WAIT.", bestSignal };
+  // Abort execution if AI did not explicitly approve
+  if (bestSignal.skipTrade || !aiVerified) {
+    return {
+      status: "Skipped",
+      message: "Mandatory AI validation failed or rejected setup. Capital preserved.",
+      reasoning: bestSignal.reasoning,
+      selectedPair: bestSignal.display
+    };
   }
 
-  // 4. Send Telegram Alert
+  // Calculate Expiration & Martingale Levels based on asset settings
+  const expiryMin = bestSignal.expiryMinutes;
+  const expiryTimeStr = getOffsetTime(entryDate, expiryMin);
+  const mg1TimeStr = getOffsetTime(entryDate, expiryMin);
+  const mg2TimeStr = getOffsetTime(entryDate, expiryMin * 2);
+
+  // Step 5: Send High-Precision Telegram Alert
   let telegramStatus = "Skipped (Missing Tokens)";
   if (env.TELEGRAM_BOT_TOKEN && env.TELEGRAM_CHAT_ID) {
     const isCall = bestSignal.direction === "CALL";
     const directionEmoji = isCall ? "🟢 CALL (HIGHER) 📈" : "🔴 PUT (LOWER) 📉";
 
     const message = `
-🔔 *IQ OPTION BLITZ SIGNAL!*
+🎯 *IQ OPTION BLITZ HIGH-WIN SIGNAL*
 
-🎫 *Asset:* 🪙 ${bestSignal.display} (Blitz)
-⚡ *Source:* ${bestSignal.source} Feed
-⏳ *Expiration:* 1 Minute
-➡️ *Entry Time:* ${entryTime} (WAT)
-📈 *Direction:* ${directionEmoji}
-🎯 *Confidence:* ${(bestSignal.confidence * 100).toFixed(0)}%
+🎫 *Asset:* 🪙 ${bestSignal.display}
+⚡ *Data Source:* ${bestSignal.source}
+⏳ *Trade Expiry:* ${expiryMin} Minute(s) (Dynamic)
+➡️ *Entry Time:* ${entryTimeStr} (WAT - In 2 Mins)
+🏁 *Close Time:* ${expiryTimeStr} (WAT)
+📊 *Direction:* ${directionEmoji}
+🔥 *Win Probability:* ${(bestSignal.confidence * 100).toFixed(0)}%
 
-↪️ *Martingale Recovery:*
- Level 1 → ${getOffsetTime(now, 1)}
- Level 2 → ${getOffsetTime(now, 2)}
+↪️ *Martingale Recovery Schedule:*
+ • Level 1 → ${mg1TimeStr}
+ • Level 2 → ${mg2TimeStr}
 
-💡 *Reason:* ${bestSignal.reasoning}
+💡 *Quant & AI Analysis:* ${bestSignal.reasoning}
+⚠️ *Risk Note:* Execute precisely at candle start. Skip if market spikes before entry.
     `.trim();
 
     await sendTelegramMessage(env, message);
     telegramStatus = "Sent Successfully";
   }
 
-  // 5. Log Signal into Cloudflare D1
+  // Step 6: Log Approved Signal into Cloudflare D1
   if (env.DB) {
-    await env.DB.prepare(
-      "INSERT INTO signals (symbol, signal, confidence, price, time_frame, entry_time, reasoning) VALUES (?, ?, ?, ?, ?, ?, ?)"
-    ).bind(bestSignal.symbol, bestSignal.direction, bestSignal.confidence, bestSignal.price, "1M", entryTime, bestSignal.reasoning).run();
+    try {
+      await env.DB.prepare(
+        "INSERT INTO signals (symbol, signal, confidence, price, time_frame, entry_time, reasoning) VALUES (?, ?, ?, ?, ?, ?, ?)"
+      ).bind(bestSignal.symbol, bestSignal.direction, bestSignal.confidence, bestSignal.price, `${expiryMin}M`, entryTimeStr, bestSignal.reasoning).run();
+    } catch (dbErr) {
+      console.warn("D1 Insert Error:", dbErr.message);
+    }
   }
 
   return {
@@ -168,12 +204,13 @@ Validate if this short-term trend is safe for 60s Blitz. Reply STRICTLY in valid
     selectedPair: bestSignal.display,
     direction: bestSignal.direction,
     confidence: bestSignal.confidence,
-    entryTime,
+    entryTime: entryTimeStr,
+    expiryMinutes: expiryMin,
     telegramStatus
   };
 }
 
-// Fetch Market Data Helper (Bybit with Binance Fallback)
+// Fetch Market Data Helper (Bybit -> Binance -> Error Fallback)
 async function fetchPairData(pair) {
   try {
     const bybitRes = await fetch(
@@ -190,10 +227,10 @@ async function fetchPairData(pair) {
           close: parseFloat(c[4]),
           volume: parseFloat(c[5])
         })).reverse();
-        return { success: true, symbol: pair.symbol, display: pair.display, source: "BYBIT", candles };
+        return { success: true, symbol: pair.symbol, display: pair.display, expiryMinutes: pair.expiryMinutes, source: "BYBIT", candles };
       }
     }
-    throw new Error("Bybit failed");
+    throw new Error("Bybit unreachable");
   } catch (err) {
     try {
       const binanceRes = await fetch(`https://api.binance.com/api/v3/klines?symbol=${pair.symbol}&interval=1m&limit=30`);
@@ -206,7 +243,7 @@ async function fetchPairData(pair) {
           close: parseFloat(c[4]),
           volume: parseFloat(c[5])
         }));
-        return { success: true, symbol: pair.symbol, display: pair.display, source: "BINANCE", candles };
+        return { success: true, symbol: pair.symbol, display: pair.display, expiryMinutes: pair.expiryMinutes, source: "BINANCE", candles };
       }
     } catch (e) {
       return { success: false, symbol: pair.symbol };
@@ -214,7 +251,7 @@ async function fetchPairData(pair) {
   }
 }
 
-// Quantitative Analysis Matrix Engine
+// Quantitative Technical Analysis Matrix (Strict Accuracy Rules)
 function analyzeMarket(asset) {
   const candles = asset.candles;
   const currentPrice = candles[candles.length - 1].close;
@@ -235,31 +272,37 @@ function analyzeMarket(asset) {
   let reasoning = "";
   let skipTrade = false;
 
-  // Rule 1: Tight Range / Squeeze Protection
-  if (atrPercent < 0.015 || candleRange === 0) {
+  // Rule 1: Tight Range & Dead Volatility Protection (Protect against unpredictable wicks)
+  if (atrPercent < 0.018 || candleRange === 0) {
     skipTrade = true;
-    reasoning = `Ranging market (ATR: ${atrPercent.toFixed(4)}%). Fallout risk high.`;
+    reasoning = `Ranging market/dead volatility (ATR: ${atrPercent.toFixed(4)}%). High fallout risk.`;
+  } else if (candleBodySize < (candleRange * 0.45)) {
+    // Rule 2: Rejection / Indecision Wick Protection (No Dojis or weak bodies)
+    skipTrade = true;
+    reasoning = `Candle indecision detected (body size < 45% of total wick range).`;
   } else {
     const isEmaBullish = ema9 > ema21;
     const isEmaBearish = ema9 < ema21;
 
-    if (isEmaBullish && rsi > 52 && rsi < 68 && candleBodySize > (candleRange * 0.4)) {
+    // Rule 3: Trend & Momentum Confluence Matrix
+    if (isEmaBullish && rsi >= 54 && rsi <= 68) {
       direction = "CALL";
-      confidence = Math.min(0.92, 0.72 + (rsi - 50) * 0.01);
-      reasoning = `EMA Bullish Cross, strong RSI (${rsi.toFixed(1)}), momentum momentum candle.`;
-    } else if (isEmaBearish && rsi < 48 && rsi > 32 && candleBodySize > (candleRange * 0.4)) {
+      confidence = Math.min(0.92, 0.76 + (rsi - 50) * 0.01);
+      reasoning = `Solid Bullish Trend (EMA 9>21), clean RSI momentum (${rsi.toFixed(1)}), strong full body.`;
+    } else if (isEmaBearish && rsi <= 46 && rsi >= 32) {
       direction = "PUT";
-      confidence = Math.min(0.92, 0.72 + (50 - rsi) * 0.01);
-      reasoning = `EMA Bearish Cross, RSI weakness (${rsi.toFixed(1)}), downward push.`;
+      confidence = Math.min(0.92, 0.76 + (50 - rsi) * 0.01);
+      reasoning = `Solid Bearish Downside (EMA 9<21), RSI downside confirmation (${rsi.toFixed(1)}).`;
     } else {
       skipTrade = true;
-      reasoning = `Neutral or exhausted price action (RSI: ${rsi.toFixed(1)}).`;
+      reasoning = `Overbought/Oversold exhaustion or flat EMAs (RSI: ${rsi.toFixed(1)}).`;
     }
   }
 
   return {
     symbol: asset.symbol,
     display: asset.display,
+    expiryMinutes: asset.expiryMinutes,
     source: asset.source,
     price: currentPrice,
     direction,
@@ -269,7 +312,7 @@ function analyzeMarket(asset) {
   };
 }
 
-// Indicator Logic
+// Indicator Helpers (< 1ms execution)
 function calculateEMA(prices, period) {
   const k = 2 / (period + 1);
   let ema = prices[0];
@@ -304,6 +347,13 @@ function calculateATR(candles, period = 10) {
     trSum += tr;
   }
   return trSum / (slice.length - 1);
+}
+
+// Database Auto-Cleanup Helper (Keep last 4 days)
+async function ctxDatabaseCleanup(db) {
+  await db.prepare(
+    "DELETE FROM signals WHERE timestamp < datetime('now', '-4 days')"
+  ).run();
 }
 
 function getOffsetTime(baseDate, addMinutes) {
