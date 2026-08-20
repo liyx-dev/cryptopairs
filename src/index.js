@@ -104,7 +104,7 @@ async function processBlitzSignal(env) {
 Pair: ${bestSignal.display}. Price: $${bestSignal.price}. Signal: ${bestSignal.direction}. Confidence: ${bestSignal.confidence}. Reason: ${bestSignal.reasoning}.
 Validate if this short-term trend is safe for 60s Blitz. Reply STRICTLY in valid JSON: {"direction": "CALL"|"PUT"|"WAIT", "confidence": 0.75-0.95, "reasoning": "1 short sentence"}`;
 
-      const aiResponse = await env.AI.run("@cf/meta/llama-3.1-8b-instruct", { prompt });
+      const aiResponse = await env.AI.run("@cf/meta/llama-3.3-70b-instruct-fp8-fast", { prompt });
       if (aiResponse && aiResponse.response) {
         const clean = aiResponse.response.trim();
         const jsonMatch = clean.match(/\{[\s\S]*\}/);
