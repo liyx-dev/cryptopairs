@@ -1,0 +1,24 @@
+name = "cryptopairs"
+main = "src/index.js"
+compatibility_date = "2026-08-15"
+keep_vars = true
+
+[observability]
+enabled = true
+
+[ai]
+binding = "AI"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "cryptopairs"
+database_id = "0d926bab-27da-4f0c-b938-cf4547d30e3c"
+
+[triggers]
+# Every 2 minutes. Free-plan Workers get only 10ms of CPU time per
+# invocation regardless of interval, so this doesn't buy more compute
+# per tick — but it roughly doubles Twelve Data's effective daily
+# safety margin (fewer refresh attempts per hour against the 800/day
+# cap) while keeping the analysis rotation reasonably fresh (~21min
+# full cycle through all assets at analysisPerRun=2).
+crons = ["*/2 * * * *"]
