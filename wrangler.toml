@@ -12,7 +12,7 @@ binding = "AI"
 [[d1_databases]]
 binding = "DB"
 database_name = "cryptopairs"
-database_id = "0d926bab-27da-4f0c-b938-cf4547d30e3c"
+database_id = "05e6ca12-b672-47e2-8950-d51dd1ade9d3"
 
 [triggers]
 # Every 2 minutes. Free-plan Workers get only 10ms of CPU time per
