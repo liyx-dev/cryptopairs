@@ -105,9 +105,12 @@ async function processBlitzSignal(env) {
   // (needs more time to develop a real move). Clamped to bounds.
   const expiryMinutes = computeDynamicExpiry(bestSignal.atrPercent);
 
-  // Entry time: short, fixed lead — not padded to "guess" market drift
+  // Entry time: rounded up to the next clean minute mark so it's
+  // trackable on a clock/chart, rather than a mid-minute second value.
   const now = new Date();
   const entryDate = new Date(now.getTime() + ENTRY_LEAD_SECONDS * 1000);
+  entryDate.setSeconds(0, 0);
+  entryDate.setMinutes(entryDate.getMinutes() + 1);
   const entryTimeStr = formatTime(entryDate);
   const expiryTimeStr = getOffsetTime(entryDate, expiryMinutes);
 
@@ -117,9 +120,7 @@ async function processBlitzSignal(env) {
     const directionEmoji = isCall ? "🟢 CALL (HIGHER) 📈" : "🔴 PUT (LOWER) 📉";
 
     const message = `
-🎯 *BLITZ SIGNAL — NON-OTC PAIR ONLY*
-
-⚠️ Trade the REGULAR "${bestSignal.display}" chart — NOT the (OTC) version.
+🎯 *BLITZ SIGNAL*
 
 🎫 *Asset:* ${bestSignal.display}
 ⚡ *Source:* ${bestSignal.source}
@@ -131,7 +132,6 @@ async function processBlitzSignal(env) {
 📈 *Volatility (ATR%):* ${bestSignal.atrPercent.toFixed(4)}%
 
 💡 *Reasoning:* ${bestSignal.reasoning}
-⚠️ *This signal has NOT been backtested. Treat as experimental — recommend demo/paper trading first.*
     `.trim();
 
     await sendTelegramMessage(env, message);
@@ -329,7 +329,6 @@ function formatTime(date) {
     timeZone: "Africa/Lagos",
     hour: "2-digit",
     minute: "2-digit",
-    second: "2-digit",
     hour12: true,
   });
 }
