@@ -15,7 +15,7 @@ binding = "DB"
 database_name = "cryptopairs"
 database_id = "05e6ca12-b672-47e2-8950-d51dd1ade9d3"
 
-[triggers]
+#[triggers]
 # Every 2 minutes. Free-plan Workers get only 10ms of CPU time per
 # invocation regardless of interval, so this doesn't buy more compute
 # per tick — but it roughly doubles Twelve Data's effective daily
