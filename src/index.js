@@ -1,13 +1,26 @@
-// src/index.js
+import { CONFIG } from "./config.js";
+import { getNextCycleTimes } from "./utils.js";
+import { getMarketSignal } from "./deriv.js";
+import { sendSignal } from "./telegram.js";
 
 export default {
   async fetch(request) {
     const url = new URL(request.url);
-
     if (url.pathname === "/trigger") {
-      return new Response("✅ Trigger endpoint working!");
-    }
+      const { entryTime, closeTime } = getNextCycleTimes();
 
-    return new Response("Hello from Cloudflare Worker!");
+      for (const pair of CONFIG.PAIRS) {
+        const direction = await getMarketSignal(pair);
+        await sendSignal(
+          pair,
+          direction,
+          entryTime.toLocaleTimeString("en-NG"),
+          closeTime.toLocaleTimeString("en-NG")
+        );
+      }
+
+      return new Response("Signals sent successfully!");
+    }
+    return new Response("Use /trigger to send signals.");
   },
 };
