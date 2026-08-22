@@ -10,9 +10,11 @@ export async function getMarketSignal(pair) {
     }),
   });
   const data = await response.json();
+  if (!data.candles || data.candles.length < 2) {
+    return "NoData";
+  }
   const candles = data.candles;
   const last = candles[candles.length - 1];
   const prev = candles[candles.length - 2];
-  const direction = last.close > prev.close ? "Rise" : "Fall";
-  return direction;
+  return last.close > prev.close ? "Rise" : "Fall";
 }
