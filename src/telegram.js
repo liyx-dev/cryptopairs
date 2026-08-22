@@ -8,4 +8,3 @@ export async function sendSignal(pair, direction, entry, close) {
     body: JSON.stringify({ chat_id: CONFIG.TELEGRAM_CHAT_ID, text: message }),
   });
 }
-
