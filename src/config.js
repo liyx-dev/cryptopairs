@@ -1,0 +1,7 @@
+export const CONFIG = {
+  DERIV_TOKEN: "pat_bcc7e10e3436a29fde76b8eaa607a932251a0d84c28ed775a705c76e38702aa2",
+  TELEGRAM_BOT_TOKEN: "8862813101:AAFfouRH6gmGVcPBrX8yyZxOFk6VPwjqJwg",
+  TELEGRAM_CHAT_ID: "8737403387",
+  TIMEZONE_OFFSET: 1, // Nigeria UTC+1
+  PAIRS: ["frxEURUSD", "frxGBPUSD", "frxUSDJPY"], // add more pairs here
+};
