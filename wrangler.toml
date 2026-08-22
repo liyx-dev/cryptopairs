@@ -21,5 +21,5 @@ database_id = "05e6ca12-b672-47e2-8950-d51dd1ade9d3"
 # safety margin (fewer refresh attempts per hour against the 800/day
 # cap) while keeping the analysis rotation reasonably fresh (~21min
 # full cycle through all assets at analysisPerRun=2).
-crons = ["*/2 * * * *"]
+#crons = ["*/2 * * * *"]
 
